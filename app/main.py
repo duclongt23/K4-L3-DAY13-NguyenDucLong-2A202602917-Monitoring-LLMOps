@@ -3,6 +3,12 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+# Load .env truoc khi import bat ky module nao dung env vars (Langfuse, etc.)
+load_dotenv()
+
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from structlog.contextvars import bind_contextvars
@@ -14,7 +20,7 @@ from .metrics import record_error, snapshot
 from .middleware import CorrelationIdMiddleware
 from .pii import hash_user_id, summarize_text
 from .schemas import ChatRequest, ChatResponse
-from .tracing import tracing_enabled
+from .tracing import get_langfuse_client, tracing_enabled
 
 configure_logging()
 log = get_logger()
@@ -30,6 +36,9 @@ async def lifespan(_: FastAPI):
         payload={"tracing_enabled": tracing_enabled()},
     )
     yield
+    # Flush Langfuse traces on shutdown so no data is lost
+    if tracing_enabled():
+        get_langfuse_client().flush()
 
 
 app = FastAPI(title="Day 13 Monitoring & LLMOps Lab", lifespan=lifespan)
@@ -84,6 +93,9 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
             tool_success=True,
             payload={"answer_preview": summarize_text(result.answer)},
         )
+        # Flush Langfuse after each request to ensure traces appear in UI immediately
+        if tracing_enabled():
+            get_langfuse_client().flush()
         return ChatResponse(
             answer=result.answer,
             correlation_id=request.state.correlation_id,
